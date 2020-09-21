@@ -97,6 +97,9 @@ public class CollectTask implements Task {
             } finally {
                 lock.unlock();
             }
+            if (err != null) {
+                Exceptions.rethrowUnchecked(err);
+            }
             return null;
         });
     }
@@ -128,11 +131,11 @@ public class CollectTask implements Task {
                 consumer.accept(null, killed);
             } else {
                 batchIterator.kill(killed);
+                // completionFuture should be triggered and release resources,
+                // but for unit tests and batchIterator implementations that take a while
+                // to check for the killed state we do it eagerly here
+                releaseResources();
             }
-            // completionFuture should be triggered and release resources,
-            // but for unit tests and batchIterator implementations that take a while
-            // to check for the killed state we do it eagerly here
-            releaseResources();
         } finally {
             lock.unlock();
         }
@@ -146,7 +149,12 @@ public class CollectTask implements Task {
             return;
         }
         try {
-            CompletableFuture<BatchIterator<Row>> futureIt = collectOperation.createIterator(txnCtx, collectPhase, consumer.requiresScroll(), this);
+            CompletableFuture<BatchIterator<Row>> futureIt = collectOperation.createIterator(
+                txnCtx,
+                collectPhase,
+                consumer.requiresScroll(),
+                this
+            );
             futureIt.whenComplete((it, err) -> {
                 if (err == null) {
                     CollectTask.this.batchIterator = it;
