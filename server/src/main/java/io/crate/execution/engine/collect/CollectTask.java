@@ -21,33 +21,36 @@
 
 package io.crate.execution.engine.collect;
 
+import java.util.ArrayList;
+import java.util.Locale;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Function;
+
 import com.carrotsearch.hppc.IntObjectHashMap;
 import com.carrotsearch.hppc.cursors.ObjectCursor;
+
+import org.elasticsearch.Version;
+import org.elasticsearch.index.engine.Engine;
+import org.elasticsearch.threadpool.ThreadPool;
+
 import io.crate.breaker.BlockBasedRamAccounting;
 import io.crate.breaker.RamAccounting;
 import io.crate.common.annotations.VisibleForTesting;
 import io.crate.data.BatchIterator;
 import io.crate.data.Row;
 import io.crate.data.RowConsumer;
+import io.crate.exceptions.Exceptions;
 import io.crate.exceptions.SQLExceptions;
 import io.crate.execution.dsl.phases.CollectPhase;
 import io.crate.execution.dsl.phases.RoutedCollectPhase;
-import io.crate.execution.jobs.AbstractTask;
 import io.crate.execution.jobs.SharedShardContexts;
+import io.crate.execution.jobs.Task;
 import io.crate.memory.MemoryManager;
 import io.crate.metadata.RowGranularity;
 import io.crate.metadata.TransactionContext;
-import org.elasticsearch.Version;
-import org.elasticsearch.index.engine.Engine;
-import org.elasticsearch.threadpool.ThreadPool;
 
-import javax.annotation.Nonnull;
-import java.util.ArrayList;
-import java.util.Locale;
-import java.util.concurrent.CompletableFuture;
-import java.util.function.Function;
-
-public class CollectTask extends AbstractTask {
+public class CollectTask implements Task {
 
     private final CollectPhase collectPhase;
     private final TransactionContext txnCtx;
@@ -57,16 +60,18 @@ public class CollectTask extends AbstractTask {
     private final SharedShardContexts sharedShardContexts;
 
     private final IntObjectHashMap<Engine.Searcher> searchers = new IntObjectHashMap<>();
-    private final Object subContextLock = new Object();
     private final RowConsumer consumer;
     private final int ramAccountingBlockSizeInBytes;
     private final ArrayList<MemoryManager> memoryManagers = new ArrayList<>();
     private final Version minNodeVersion;
+    private final ReentrantLock lock = new ReentrantLock();
 
     private BatchIterator<Row> batchIterator = null;
     private long totalBytes = -1;
+    private CompletableFuture<Void> completionFuture;
+    private Throwable killed = null;
 
-    public CollectTask(final CollectPhase collectPhase,
+    public CollectTask(CollectPhase collectPhase,
                        TransactionContext txnCtx,
                        MapSideDataCollectOperation collectOperation,
                        RamAccounting ramAccounting,
@@ -75,7 +80,6 @@ public class CollectTask extends AbstractTask {
                        SharedShardContexts sharedShardContexts,
                        Version minNodeVersion,
                        int ramAccountingBlockSizeInBytes) {
-        super(collectPhase.phaseId());
         this.collectPhase = collectPhase;
         this.txnCtx = txnCtx;
         this.collectOperation = collectOperation;
@@ -84,37 +88,109 @@ public class CollectTask extends AbstractTask {
         this.sharedShardContexts = sharedShardContexts;
         this.consumer = consumer;
         this.ramAccountingBlockSizeInBytes = ramAccountingBlockSizeInBytes;
-        this.consumer.completionFuture().whenComplete(closeOrKill(this));
         this.minNodeVersion = minNodeVersion;
+        this.completionFuture = consumer.completionFuture().handle((res, err) -> {
+            totalBytes = ramAccounting.totalBytes();
+            lock.lock();
+            try {
+                releaseResources();
+            } finally {
+                lock.unlock();
+            }
+            return null;
+        });
     }
 
-    public void addSearcher(int searcherId, Engine.Searcher searcher) {
-        if (isClosed()) {
-            // if this is closed and addContext is called this means the context got killed.
-            searcher.close();
-            return;
+    private void releaseResources() {
+        assert lock.isHeldByCurrentThread() : "releaseResources must be called under a lock";
+        for (ObjectCursor<Engine.Searcher> cursor : searchers.values()) {
+            cursor.value.close();
         }
+        searchers.clear();
 
-        synchronized (subContextLock) {
-            Engine.Searcher replacedSearcher = searchers.put(searcherId, searcher);
-            if (replacedSearcher != null) {
-                replacedSearcher.close();
-                searcher.close();
-                throw new IllegalArgumentException(String.format(Locale.ENGLISH,
-                    "ShardCollectContext for %d already added", searcherId));
+        for (var memoryManager : memoryManagers) {
+            memoryManager.close();
+        }
+        memoryManagers.clear();
+    }
+
+    @Override
+    public CompletableFuture<Void> completionFuture() {
+        return completionFuture;
+    }
+
+    @Override
+    public void kill(Throwable throwable) {
+        lock.lock();
+        killed = throwable;
+        try {
+            if (batchIterator == null) {
+                consumer.accept(null, killed);
+            } else {
+                batchIterator.kill(killed);
             }
+            // completionFuture should be triggered and release resources,
+            // but for unit tests and batchIterator implementations that take a while
+            // to check for the killed state we do it eagerly here
+            releaseResources();
+        } finally {
+            lock.unlock();
         }
     }
 
     @Override
-    protected void innerClose() {
-        totalBytes = ramAccounting.totalBytes();
-        closeSearchContexts();
-        synchronized (memoryManagers) {
-            for (MemoryManager memoryManager : memoryManagers) {
-                memoryManager.close();
-            }
-            memoryManagers.clear();
+    public void start() {
+        lock.lock();
+        if (killed != null) {
+            lock.unlock();
+            return;
+        }
+        try {
+            CompletableFuture<BatchIterator<Row>> futureIt = collectOperation.createIterator(txnCtx, collectPhase, consumer.requiresScroll(), this);
+            futureIt.whenComplete((it, err) -> {
+                if (err == null) {
+                    CollectTask.this.batchIterator = it;
+                    String threadPoolName = threadPoolName(collectPhase, it.hasLazyResultSet());
+                    try {
+                        collectOperation.launch(() -> consumer.accept(it, null), threadPoolName);
+                    } catch (Throwable t) {
+                        consumer.accept(null, t);
+                    } finally {
+                        lock.unlock();
+                    }
+                } else {
+                    try {
+                        consumer.accept(null, SQLExceptions.unwrap(err));
+                    } finally {
+                        lock.unlock();
+                    }
+                }
+            });
+        } catch (Throwable t) {
+            lock.unlock();
+            throw t;
+        }
+    }
+
+    @Override
+    public int id() {
+        return collectPhase.phaseId();
+    }
+
+    public void addSearcher(int searcherId, Engine.Searcher searcher) {
+        lock.lock();
+        if (killed != null) {
+            lock.unlock();
+            searcher.close();
+            throw Exceptions.toRuntimeException(killed);
+        }
+        Engine.Searcher replacedSearcher = searchers.put(searcherId, searcher);
+        lock.unlock();
+        if (replacedSearcher != null) {
+            replacedSearcher.close();
+            searcher.close();
+            throw new IllegalArgumentException(String.format(Locale.ENGLISH,
+                "ShardCollectContext for %d already added", searcherId));
         }
     }
 
@@ -127,23 +203,6 @@ public class CollectTask extends AbstractTask {
         }
     }
 
-    private void closeSearchContexts() {
-        synchronized (subContextLock) {
-            for (ObjectCursor<Engine.Searcher> cursor : searchers.values()) {
-                cursor.value.close();
-            }
-            searchers.clear();
-        }
-    }
-
-    @Override
-    public void innerKill(@Nonnull Throwable throwable) {
-        if (batchIterator != null) {
-            batchIterator.kill(throwable);
-        }
-        innerClose();
-    }
-
     @Override
     public String name() {
         return collectPhase.name();
@@ -152,30 +211,13 @@ public class CollectTask extends AbstractTask {
     @Override
     public String toString() {
         return "CollectTask{" +
-               "id=" + id +
+               "id=" + collectPhase.phaseId() +
                ", sharedContexts=" + sharedShardContexts +
                ", consumer=" + consumer +
                ", searchContexts=" + searchers.keys() +
-               ", closed=" + isClosed() +
+               ", killed=" + killed +
+               ", finished=" + completionFuture.isDone() +
                '}';
-    }
-
-    @Override
-    protected void innerStart() {
-        CompletableFuture<BatchIterator<Row>> futureIt = collectOperation.createIterator(txnCtx, collectPhase, consumer.requiresScroll(), this);
-        futureIt.whenComplete((it, err) -> {
-            if (err == null) {
-                CollectTask.this.batchIterator = it;
-                String threadPoolName = threadPoolName(collectPhase, it.hasLazyResultSet());
-                try {
-                    collectOperation.launch(() -> consumer.accept(it, null), threadPoolName);
-                } catch (Throwable t) {
-                    consumer.accept(null, t);
-                }
-            } else {
-                consumer.accept(null, SQLExceptions.unwrap(err));
-            }
-        });
     }
 
     public TransactionContext txnCtx() {
@@ -208,11 +250,17 @@ public class CollectTask extends AbstractTask {
     }
 
     public MemoryManager memoryManager() {
-        MemoryManager memoryManager = memoryManagerFactory.apply(ramAccounting);
-        synchronized (memoryManagers) {
+        lock.lock();
+        try {
+            MemoryManager memoryManager = memoryManagerFactory.apply(ramAccounting);
+            if (killed != null) {
+                throw Exceptions.toRuntimeException(killed);
+            }
             memoryManagers.add(memoryManager);
+            return memoryManager;
+        } finally {
+            lock.unlock();
         }
-        return memoryManager;
     }
 
     public Version minNodeVersion() {

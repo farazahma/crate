@@ -21,7 +21,25 @@
 
 package io.crate.execution.engine.collect;
 
-import com.carrotsearch.randomizedtesting.RandomizedTest;
+import static org.hamcrest.Matchers.is;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import java.util.concurrent.CompletableFuture;
+
+import org.elasticsearch.Version;
+import org.elasticsearch.index.engine.Engine;
+import org.elasticsearch.test.ESTestCase;
+import org.elasticsearch.threadpool.ThreadPool;
+import org.junit.Before;
+import org.junit.Test;
+import org.mockito.Mockito;
+
 import io.crate.breaker.RamAccounting;
 import io.crate.data.BatchIterator;
 import io.crate.data.Row;
@@ -33,27 +51,8 @@ import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.metadata.Routing;
 import io.crate.metadata.RowGranularity;
 import io.crate.testing.TestingRowConsumer;
-import org.elasticsearch.Version;
-import org.elasticsearch.index.engine.Engine;
-import org.elasticsearch.threadpool.ThreadPool;
-import org.junit.Before;
-import org.junit.Test;
-import org.mockito.Mockito;
 
-import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
-import java.util.concurrent.CompletableFuture;
-
-public class CollectTaskTest extends RandomizedTest {
+public class CollectTaskTest extends ESTestCase {
 
     private CollectTask collectTask;
     private RoutedCollectPhase collectPhase;
@@ -61,6 +60,7 @@ public class CollectTaskTest extends RandomizedTest {
 
     @Before
     public void setUp() throws Exception {
+        super.setUp();
         localNodeId = "dummyLocalNodeId";
         collectPhase = Mockito.mock(RoutedCollectPhase.class);
         Routing routing = Mockito.mock(Routing.class);
@@ -93,20 +93,6 @@ public class CollectTaskTest extends RandomizedTest {
             verify(mock1, times(1)).close();
             verify(mock2, times(1)).close();
         }
-    }
-
-    @Test
-    public void testInnerCloseClosesSearchContexts() throws Exception {
-        Engine.Searcher mock1 = mock(Engine.Searcher.class);
-        Engine.Searcher mock2 = mock(Engine.Searcher.class);
-
-        collectTask.addSearcher(1, mock1);
-        collectTask.addSearcher(2, mock2);
-
-        collectTask.innerClose();
-
-        verify(mock1, times(1)).close();
-        verify(mock2, times(1)).close();
     }
 
     @Test
