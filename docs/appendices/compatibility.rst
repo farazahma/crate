@@ -4,7 +4,7 @@
 Compatibility
 =============
 
-CrateDB aims to provide a SQL implementation that is familiar to anyone who 
+CrateDB aims to provide a `SQL implementation`_ that is familiar to anyone who 
 has used databases that provide a standards-compliant SQL language. However,
 you should be aware of some unique characteristics in CrateDB's SQL dialect.
 
@@ -20,7 +20,7 @@ Data types
 ----------
 
 CrateDB supports a set of primitive data types. The following table defines
-how data types of standard SQL map to CrateDB :ref:`data-types`.
+how data types of `standard SQL`_ map to CrateDB :ref:`data-types`.
 
 +-----------------------------------+-----------------------------+
 | Standard SQL                      | CrateDB                     |
@@ -71,7 +71,7 @@ the cluster, its nodes, and their shards.
 BLOB support
 ------------
 
-Standard SQL defines a binary string type, called ``BLOB`` or ``BINARY LARGE
+`Standard SQL`_ defines a binary string type, called ``BLOB`` or ``BINARY LARGE
 OBJECT``. With CrateDB, Binary Data is instead stored in separate BLOB Tables
 (see :ref:`blob_support`) which can be sharded and replicated.
 
@@ -88,10 +88,12 @@ the record is modified. This version number can be used to implement patterns
 like :ref:`sql_occ`, which can be used to solve many of the use cases that
 would otherwise require traditional transactions.
 
+Transaction statements do not throw an error.
+
 Unsupported features and functions
 ==================================
 
-These **features** of standard SQL are not supported:
+These **features** of `standard SQL`_ are not supported:
 
 - Stored procedures
 
@@ -109,7 +111,7 @@ These **features** of standard SQL are not supported:
 
   - Exclusion constraints
 
-These **functions** of standard SQL are either not supported or only partly supported:
+These **functions** of `standard SQL`_ are either not supported or only partly supported:
 
 - Aggregate functions
 
@@ -139,8 +141,13 @@ These **functions** of standard SQL are either not supported or only partly supp
 exposed in the :ref:`information_schema` table (see :ref:`sql_features` for
 usage).
 
+CrateDB also supports the `PostgreSQL wire protocol`_. 
+
 If you have use cases for any missing features, functions, or dialect
 improvements, let us know on `Github`_! We are always improving and extending
 CrateDB and would love to hear your feedback.
 
 .. _Github: https://github.com/crate/crate
+.. _PostgreSQL wire protocol: https://crate.io/docs/crate/reference/en/latest/interfaces/postgres.html
+.. _SQL implementation: https://crate.io/docs/sql-99/en/latest/
+.. _standard SQL: https://crate.io/docs/sql-99/en/latest/
