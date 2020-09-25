@@ -4,9 +4,9 @@
 Compatibility
 =============
 
-CrateDB aims to provide an SQL implementation that is familiar to anyone having
-used other databases providing a standards-compliant SQL language. However, it
-is worth being aware of some unique characteristics in CrateDB's SQL dialect.
+CrateDB aims to provide a SQL implementation that is familiar to anyone who 
+has used databases that provide a standards-compliant SQL language. However,
+you should be aware of some unique characteristics in CrateDB's SQL dialect.
 
 .. rubric:: Table of contents
 
@@ -52,8 +52,7 @@ Create table
 ------------
 
 :ref:`ref-create-table` supports additional storage and table parameters for
-sharding, replication and routing of the data, and does not support
-inheritance.
+sharding, replication and routing of data, and does not support inheritance.
 
 Alter table
 -----------
@@ -94,13 +93,13 @@ Unsupported features and functions
 
 These **features** of standard SQL are not supported:
 
-- Stored Procedures
+- Stored procedures
 
 - Triggers
 
 - ``VALUES`` list used as constant tables
 
-- ``WITH`` Statements
+- ``WITH`` statements
 
 - Sequences
 
@@ -112,17 +111,15 @@ These **features** of standard SQL are not supported:
 
   - Foreign key
 
-  - Check constraints
-
   - Exclusion constraints
 
-These **functions** are either not supported or only partly supported:
+These **functions** of standard SQL are either not supported or only partly supported:
 
 - Aggregate functions
 
   - Various functions available (see :ref:`aggregation`)
 
-- Window Functions
+- Window functions
 
   - Various functions available (see :ref:`window-functions`)
 
@@ -142,11 +139,12 @@ These **functions** are either not supported or only partly supported:
 
 - XML functions
 
-The currently supported and unsupported features in CrateDB are exposed in the
-:ref:`information_schema` table (see :ref:`sql_features` for usage).
+**Note**: The currently supported and unsupported features in CrateDB are
+exposed in the :ref:`information_schema` table (see :ref:`sql_features` for
+usage).
 
-If you are missing features, functions or dialect improvements and have a great
-use case for it, let us know on `Github`_. We're always improving and extending
-CrateDB, and we love to hear feedback.
+If you have use cases for any missing features, functions, or dialect
+improvements, let us know on `Github`_! We are always improving and extending
+CrateDB and would love to hear your feedback.
 
 .. _Github: https://github.com/crate/crate
