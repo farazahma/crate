@@ -514,7 +514,7 @@ public final class TransportCloseTable extends TransportMasterNodeAction<CloseTa
             for (IntObjectCursor<IndexShardRoutingTable> shard : shards) {
                 final IndexShardRoutingTable shardRoutingTable = shard.value;
                 final ShardId shardId = shardRoutingTable.shardId();
-                sendVerifyShardBeforeCloseRequest(shardRoutingTable, closingBlock, new NotifyOnceListener<ReplicationResponse>() {
+                sendVerifyShardBeforeCloseRequest(shardRoutingTable, closingBlock, new NotifyOnceListener<>() {
                     @Override
                     public void innerOnResponse(final ReplicationResponse replicationResponse) {
                         ReplicationResponse.ShardInfo shardInfo = replicationResponse.getShardInfo();
@@ -550,7 +550,7 @@ public final class TransportCloseTable extends TransportMasterNodeAction<CloseTa
                 return;
             }
             TransportVerifyShardBeforeCloseAction.ShardRequest shardRequest =
-                new TransportVerifyShardBeforeCloseAction.ShardRequest(shardId, closingBlock);
+                new TransportVerifyShardBeforeCloseAction.ShardRequest(shardId, false, closingBlock);
 
             verifyShardBeforeClose.execute(shardRequest, listener);
         }

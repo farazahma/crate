@@ -23,6 +23,7 @@ import java.io.IOException;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.admin.indices.flush.FlushRequest;
 import org.elasticsearch.action.support.replication.ReplicationOperation.Replicas;
@@ -96,8 +97,8 @@ public class TransportVerifyShardBeforeCloseAction extends TransportReplicationA
     }
 
     @Override
-    protected void shardOperationOnPrimary(final ShardRequest shardRequest, final IndexShard primary,
-            ActionListener<PrimaryResult<ShardRequest, ReplicationResponse>> listener) {
+    public void shardOperationOnPrimary(final ShardRequest shardRequest, final IndexShard primary,
+                                        ActionListener<PrimaryResult<ShardRequest, ReplicationResponse>> listener) {
         ActionListener.completeWith(listener, () -> {
             executeShardOperation(shardRequest, primary);
             return new PrimaryResult<>(shardRequest, new ReplicationResponse());
@@ -121,13 +122,23 @@ public class TransportVerifyShardBeforeCloseAction extends TransportReplicationA
             throw new IllegalStateException("Index shard " + shardId + " must be blocked by " + request.clusterBlock() + " before closing");
         }
 
-        indexShard.verifyShardBeforeIndexClosing();
-        indexShard.flush(new FlushRequest().force(true));
-        LOGGER.debug("{} shard is ready for closing", shardId);
+        if (request.isPhase1()) {
+            // in order to advance the global checkpoint to the maximum sequence number, the (persisted) local checkpoint needs to be
+            // advanced first, which, when using async translog syncing, does not automatically hold at the time where we have acquired
+            // all operation permits. Instead, this requires and explicit sync, which communicates the updated (persisted) local checkpoint
+            // to the primary (we call this phase1), and phase2 can then use the fact that the global checkpoint has moved to the maximum
+            // sequence number to pass the verifyShardBeforeIndexClosing check and create a safe commit where the maximum sequence number
+            // is equal to the global checkpoint.
+            indexShard.sync();
+        } else {
+            indexShard.verifyShardBeforeIndexClosing();
+            indexShard.flush(new FlushRequest().force(true).waitIfOngoing(true));
+            logger.trace("{} shard is ready for closing", shardId);
+        }
     }
 
     @Override
-    protected Replicas<ShardRequest> newReplicasProxy(long primaryTerm) {
+    public Replicas<ShardRequest> newReplicasProxy(long primaryTerm) {
         return new VerifyShardBeforeCloseActionReplicasProxy(primaryTerm);
     }
 
@@ -151,19 +162,30 @@ public class TransportVerifyShardBeforeCloseAction extends TransportReplicationA
     public static class ShardRequest extends ReplicationRequest<ShardRequest> {
 
         private final ClusterBlock clusterBlock;
+        private final boolean phase1;
 
         ShardRequest(StreamInput in) throws IOException {
             super(in);
+            if (in.getVersion().onOrAfter(Version.V_4_3_0)) {
+                phase1 = in.readBoolean();
+            } else {
+                phase1 = false;
+            }
             this.clusterBlock = new ClusterBlock(in);
         }
 
-        public ShardRequest(ShardId shardId, ClusterBlock clusterBlock) {
+        public ShardRequest(ShardId shardId, boolean phase1, ClusterBlock clusterBlock) {
             super(shardId);
+            this.phase1 = phase1;
             this.clusterBlock = clusterBlock;
         }
 
         public ClusterBlock clusterBlock() {
             return clusterBlock;
+        }
+
+        public boolean isPhase1() {
+            return phase1;
         }
 
         @Override
@@ -174,6 +196,9 @@ public class TransportVerifyShardBeforeCloseAction extends TransportReplicationA
         @Override
         public void writeTo(final StreamOutput out) throws IOException {
             super.writeTo(out);
+            if (out.getVersion().onOrAfter(Version.V_4_3_0)) {
+                out.writeBoolean(phase1);
+            }
             clusterBlock.writeTo(out);
         }
     }
