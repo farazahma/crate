@@ -97,10 +97,6 @@ These **features** of standard SQL are not supported:
 
 - Triggers
 
-- ``VALUES`` list used as constant tables
-
-- ``WITH`` statements
-
 - Sequences
 
 - Inheritance
