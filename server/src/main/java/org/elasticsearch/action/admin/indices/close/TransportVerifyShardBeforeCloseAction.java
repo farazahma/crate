@@ -23,7 +23,6 @@ import java.io.IOException;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.admin.indices.flush.FlushRequest;
 import org.elasticsearch.action.support.replication.ReplicationOperation.Replicas;
@@ -166,11 +165,7 @@ public class TransportVerifyShardBeforeCloseAction extends TransportReplicationA
 
         ShardRequest(StreamInput in) throws IOException {
             super(in);
-            if (in.getVersion().onOrAfter(Version.V_4_3_0)) {
-                phase1 = in.readBoolean();
-            } else {
-                phase1 = false;
-            }
+            phase1 = in.readBoolean();
             this.clusterBlock = new ClusterBlock(in);
         }
 
@@ -196,9 +191,7 @@ public class TransportVerifyShardBeforeCloseAction extends TransportReplicationA
         @Override
         public void writeTo(final StreamOutput out) throws IOException {
             super.writeTo(out);
-            if (out.getVersion().onOrAfter(Version.V_4_3_0)) {
-                out.writeBoolean(phase1);
-            }
+            out.writeBoolean(phase1);
             clusterBlock.writeTo(out);
         }
     }
